@@ -1,8 +1,7 @@
-import serial
 import time
 import datetime
 import struct
-import math
+import csv
 
 from threading import Event, Thread
 
@@ -11,17 +10,40 @@ from utils.pid import PID
 from connections.control import Control
 from connections.i2c import I2C
 from utils.logger import Logger
+import utils.messages as msg
 
 class ReflowOven:
-    def __init__(self):
+    def __init__(self, mode, pid = PID()):
+        self.mode = mode
+        self.pid = pid
+        self.initAll()
+        
+    def initAll(self):
         self.createVariables()
         self.createEvents()
         self.uart = UART(self.port, self.baudrate, self.timeout)
-        self.pid = PID()
         self.control = Control(self.resistencePort, self.ventPort)
         self.i2c = I2C()
         self.logger = Logger()
         self.startServices()
+        
+    def putReferenceTemperature(self):
+        temp = float(input('Insira a temperatura de referência: '))
+        self.sendReferenceSignal(temp)
+        
+    def curveReflow(self):
+        stop = False
+        while stop == False:
+            file = open('curva_reflow.csv')
+            csvReader = csv.reader(file, delimiter=',')
+            for row in csvReader:
+                if self.time > row[0]:
+                    stop = True
+                    break
+                elif self.time == row[0]:
+                    self.sendReferenceSignal(row[1])
+            time.sleep(1)
+            self.time += 1
         
     def createVariables(self):
         self.port = '/dev/serial0'
@@ -33,6 +55,8 @@ class ReflowOven:
         self.internalTemperature = 0
         self.referenceTemperature = 0
         self.externalTemperature = 0
+        self.time = 0
+        self.curveOn = False
     
     def createEvents(self):
         self.on = Event()
@@ -45,33 +69,53 @@ class ReflowOven:
     def startServices(self):
         self.turnOn()
         
-        thread_routine = Thread(target=self.routine)
+        if self.mode == 3 or self.mode == 1:
+            self.start()
+            self.changeMode()
+            
+        if self.mode == 1:
+            self.putReferenceTemperature()
+        
+        thread_routine = Thread(target=self.routine, args=())
         thread_routine.start()
         
-        thread_logger = Thread(target=self.saveLog)
+        thread_logger = Thread(target=self.saveLog, args=())
         thread_logger.start()
+        
+        if self.mode == 3:
+            thread_curveReflow = Thread(target=self.curveReflow, args=())
+            thread_curveReflow.start()
         
         print('Forno foi iniciado!')
         
     def turnOn(self):
         self.sending.set()
-        command = b'\x01\x23\xd3'
+        command = msg.TURNON
         
-        self.uart.send(command, self.registrationCode, b'\x01')
+        self.uart.send(command, self.registrationCode, msg.ONE)
         data = self.uart.receive()
-        print(data)
-        
+                
         if data is not None:
             self.stop()
             self.on.set()
         
         self.sending.clear()
         
+    def sendReferenceSignal(self, referenceTemperature):
+        self.sending.set()
+        command = msg.SEND_REFERENCE_SIGNAL
+        
+        temp = struct.pack('<f', round(referenceTemperature, 2))
+        
+        self.uart.send(command, self.registrationCode, temp)
+        
+        self.sending.clear()
+        
     def turnOff(self):
         self.sending.set()
-        command = b'\x01\x23\xd3'
+        command = msg.TURNOFF
 
-        self.uart.send(command, self.registrationCode, b'\x00')
+        self.uart.send(command, self.registrationCode, msg.ZERO)
         data = self.uart.receive()
 
         if data is not None:
@@ -82,9 +126,9 @@ class ReflowOven:
         
     def start(self):
         self.sending.set()
-        command = b'\x01\x23\xd5'
+        command = msg.START
         
-        self.uart.send(command, self.registrationCode, b'\x01')
+        self.uart.send(command, self.registrationCode, msg.ONE)
         data = self.uart.receive()
         
         if data is not None:
@@ -94,9 +138,9 @@ class ReflowOven:
         
     def stop(self):
         self.sending.set()
-        command = b'\x01\x23\xd5'
+        command = msg.STOP
         
-        self.uart.send(command, self.registrationCode, b'\x00')
+        self.uart.send(command, self.registrationCode, msg.ZERO)
         data = self.uart.receive()
         
         if data is not None:
@@ -105,10 +149,11 @@ class ReflowOven:
         self.sending.clear()
         
     def changeMode(self):
+        self.curveOn ^= True
         self.sending.set()
-        command = b'\x01\x23\xd4'
+        command = msg.CHANGE_MODE
         
-        self.uart.send(command, self.registrationCode, b'\x00')
+        self.uart.send(command, self.registrationCode, msg.ONE if self.curveOn else msg.ZERO)
         data = self.uart.receive()
         
         if data is not None:
@@ -117,13 +162,15 @@ class ReflowOven:
         self.sending.clear()
         
     def askReferenceTemperature(self):
-        command = b'\x01\x23\xc2'
+        command = msg.ASK_REFERENCE_TEMPERATURE
         
-        self.uart.send(command, self.registrationCode, b'')
+        self.uart.send(command, self.registrationCode, msg.EMPTY)
         dados = self.uart.receive()
 
         if dados is not None:
             self.handleReferenceTemperature(dados)
+        else:
+            print('Temperatura de referência recebida nula.')
             
     def handleReferenceTemperature(self, bytes):
         temp = struct.unpack('f', bytes)[0]
@@ -131,14 +178,12 @@ class ReflowOven:
         
         if temp > 0 and temp < 100:
             self.referenceTemperature = temp
-        
-        self.setOven()
-        
+                
     def sendExternalTemperature(self):
         self.sending.set()
-        command = b'\x01\x23\xd1'
+        command = msg.SEND_EXTERNAL_TEMPERATURE
         
-        temp = struct.pack('<f', round(5.555, 2))
+        temp = struct.pack('<f', round(self.externalTemperature, 2))
 
         self.uart.send(command, self.registrationCode, temp)
                 
@@ -146,18 +191,19 @@ class ReflowOven:
         
     def routine(self):
         while True:
-            self.askInput()
-            time.sleep(0.5)
-            self.askInput()
-            time.sleep(0.5)
-            self.askReferenceTemperature()
+            if self.mode == 2:
+                self.askInput()
+                time.sleep(0.5)
+                self.askInput()
+                time.sleep(0.5)
+                self.askReferenceTemperature()
             self.askInternalTemperature()
             self.askExternalTemperature()
             
     def askInput(self):
-        command = b'\x01\x23\xc3'
+        command = msg.ASK_INPUT
         
-        self.uart.send(command, self.registrationCode, b'')
+        self.uart.send(command, self.registrationCode, msg.EMPTY)
         data = self.uart.receive()
         
         if data is not None:
@@ -173,9 +219,9 @@ class ReflowOven:
         self.sendExternalTemperature()
         
     def askInternalTemperature(self):
-        command = b'\x01\x23\xc1'
+        command = msg.ASK_INTERNAL_TEMPERATURE
 
-        self.uart.send(command, self.registrationCode, b'')
+        self.uart.send(command, self.registrationCode, msg.EMPTY)
         dados = self.uart.receive()
 
         if dados is not None:
@@ -209,31 +255,21 @@ class ReflowOven:
                 print('pid f', pid)
                 
                 self.sendControlSignal(pid)
-                
-                if math.isclose(self.internalTemperature, self.referenceTemperature, rel_tol=1e-2):
-                    self.heating.clear()
-                    self.cooling.clear()
-                elif self.internalTemperature < self.referenceTemperature:
-                    self.heating.set()
-                    self.cooling.clear()
-                elif self.internalTemperature > self.referenceTemperature:
-                    self.heating.clear()
-                    self.cooling.set()
-                    
-                if pid > 0: 
+                                
+                if pid > 0:
                     self.control.warm(pid)
                     self.control.cool(0)
                 else:
                     pid *= -1
                     self.control.warm(0)
-                    
                     if pid < 40.0:
                         self.control.cool(40.0)
                     else:
                         self.control.cool(pid)
             else:
-                pid = self.pid.pid_control(27.0, self.internalTemperature)
-                print('pid r', pid)
+                pid = self.pid.pid_control(self.externalTemperature, self.internalTemperature)
+                
+                print('pid', pid)
                 
                 if pid < 0:
                     self.sendControlSignal(pid)
@@ -242,10 +278,9 @@ class ReflowOven:
                     self.cooling.set()
                 else:
                     self.cooling.clear()
-                    
+                
                 self.control.warm(0)
                 self.heating.clear()
-            
         else:
             self.control.warm(0)
             self.control.cool(0)
@@ -255,12 +290,13 @@ class ReflowOven:
     
     def sendControlSignal(self, pid):
         self.sending.set()
-        command = b'\x01\x23\xd1'
+        command = msg.SEND_CONTROL_SIGNAL
         value = round(pid).to_bytes(4, 'little', signed = True)
 
         self.uart.send(command, self.registrationCode, value)
         
         self.sending.clear()
+        
         
     def handleButton(self, bytes):        
         button = format(bytes[0], '02x')

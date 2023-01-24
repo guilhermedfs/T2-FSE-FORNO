@@ -1,7 +1,9 @@
 class PID:
-    Kp = 30.0  # Ganho Proporcional
-    Ki = 0.2  # Ganho Integral
-    Kd = 400.0  # Ganho Derivativo
+    def __init__(self, Kp = 30.0, Ki = 0.2, Kd = 400.0):
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+        
     T = 1.0   # Período de Amostragem (ms)
 
     total_error = 0.0
