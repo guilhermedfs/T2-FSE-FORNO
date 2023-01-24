@@ -34,3 +34,22 @@ cd T2-FSE-FORNO
 python3 main.py
 ```
 
+## Gráficos
+
+| ![Gráfico de Temperatura](./res/grafico_temperatura.png) | 
+|:--:| 
+| Gráfico de Temperatura |
+
+| ![Gráfico de Controle](./res/grafico_controle.png) | 
+|:--:| 
+| Gráfico de Controle |
+
+## Interface
+
+| ![Menu](./res/menu.png) | 
+|:--:| 
+| Menu |
+
+| ![Menu](./res/constantes_k.png) | 
+|:--:| 
+| Alteração de constantes K |
