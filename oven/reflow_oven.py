@@ -174,7 +174,7 @@ class ReflowOven:
             
     def handleReferenceTemperature(self, bytes):
         temp = struct.unpack('f', bytes)[0]
-        print('temperatura ref', temp)
+        print('Temperatura de Referência', temp)
         
         if temp > 0 and temp < 100:
             self.referenceTemperature = temp
@@ -215,7 +215,7 @@ class ReflowOven:
         
     def handleExternalTemperature(self, temperature):
         self.externalTemperature = temperature
-        print('temp externa: ', temperature)
+        print('Temperatura do ambiente: ', temperature)
         self.sendExternalTemperature()
         
     def askInternalTemperature(self):
@@ -229,7 +229,7 @@ class ReflowOven:
             
     def handleInternalTemperature(self, bytes):
         temp = struct.unpack('f', bytes)[0]
-        print('temperatura int', self.internalTemperature)
+        print('Temperatura Interna', self.internalTemperature)
         
         if temp > 0 and temp < 100:
             self.internalTemperature = temp
@@ -252,7 +252,7 @@ class ReflowOven:
             if self.working.is_set():
                 pid = self.pid.pid_control(self.referenceTemperature, self.internalTemperature)
                 
-                print('pid f', pid)
+                print('PID f - ', pid)
                 
                 self.sendControlSignal(pid)
                                 
@@ -302,7 +302,7 @@ class ReflowOven:
         button = format(bytes[0], '02x')
         
         if button != '00':
-            print('botao', button)
+            print('Botao pressionado: ', button)
             
         if button == 'a1':
             self.turnOn()
